@@ -29,7 +29,7 @@ final class GameScene: SKScene {
     private var y: CGFloat = 0
     private var vy: CGFloat = 0
     private var air: CGFloat = 1
-    private var speed: CGFloat = Tune.startSpeed
+    private var roadSpeed: CGFloat = Tune.startSpeed
     private var dist: CGFloat = 0
     private var t: CGFloat = 0
     private var scroll: CGFloat = 0
@@ -137,7 +137,7 @@ final class GameScene: SKScene {
         y = gy
         vy = 0
         air = 1
-        speed = Tune.startSpeed
+        roadSpeed = Tune.startSpeed
         dist = 0
         t = 0
         bonus = 0
@@ -213,7 +213,7 @@ final class GameScene: SKScene {
             overT += TimeInterval(dt)
             return
         }
-        let sp = (state == .play ? speed : Tune.idleSpeed) * k
+        let sp = (state == .play ? roadSpeed : Tune.idleSpeed) * k
         scroll += sp * dt
         backdrop?.update(scroll: scroll)
         guard state == .play else {
@@ -222,7 +222,7 @@ final class GameScene: SKScene {
         }
 
         t += dt
-        speed = min(Tune.maxSpeed, Tune.startSpeed + t * Tune.speedRamp)
+        roadSpeed = min(Tune.maxSpeed, Tune.startSpeed + t * Tune.speedRamp)
         let v = sp * dt
         dist += v
         for o in obstacles { o.x -= v }
@@ -440,7 +440,7 @@ final class GameScene: SKScene {
             world.addChild(c.node)
             cans.append(c)
         }
-        nextGap = span + CGFloat.random(in: 1.05...1.8) * speed * k
+        nextGap = span + CGFloat.random(in: 1.05...1.8) * roadSpeed * k
     }
 
     private func throwBall(at truck: Obstacle) {
@@ -508,7 +508,7 @@ final class GameScene: SKScene {
     }
 
     private func updateHUD() {
-        hud?.update(score: score, best: best, air: air, mph: Int(speed * Tune.mphPerUnit), chain: chain)
+        hud?.update(score: score, best: best, air: air, mph: Int(roadSpeed * Tune.mphPerUnit), chain: chain)
     }
 
     private func pop(_ text: String, at p: CGPoint, color: UIColor) {
