@@ -8,6 +8,12 @@ enum Tune {
     static let thrust: CGFloat = 4300
     static let maxRise: CGFloat = 950
 
+    /// Seconds for the thrusters to reach full push. Lift only beats gravity about halfway in,
+    /// so a quick tap barely leaves the road and a long hold builds into a big launch.
+    static let spoolUp: CGFloat = 0.55
+    /// Seconds for thrust to bleed off after letting go.
+    static let spoolDown: CGFloat = 0.18
+
     /// A full tank is 2 s of thrust; the road refills it from empty in about 5.5 s.
     static let airDrain: CGFloat = 0.5
     static let airRefill: CGFloat = 0.18

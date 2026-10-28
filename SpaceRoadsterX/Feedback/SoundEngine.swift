@@ -11,7 +11,10 @@ final class SoundEngine {
     }
 
     var enabled = true {
-        didSet { if !enabled { setThrust(0) } }
+        didSet {
+            if !enabled { setThrust(0) }
+            updateMusic()
+        }
     }
 
     private let engine = AVAudioEngine()
@@ -20,6 +23,13 @@ final class SoundEngine {
     private var nextVoice = 0
     private var buffers: [Sfx: AVAudioPCMBuffer] = [:]
     private let synth = ThrustSynth()
+    private let musicVoice = AVAudioPlayerNode()
+    private var musicBuffer: AVAudioPCMBuffer?
+    private var musicPlaying = false
+
+    var musicEnabled = true {
+        didSet { updateMusic() }
+    }
 
     private init() {
         format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1)!
@@ -36,6 +46,9 @@ final class SoundEngine {
             voices.append(voice)
         }
 
+        engine.attach(musicVoice)
+        engine.connect(musicVoice, to: engine.mainMixerNode, format: format)
+
         let synth = self.synth
         let sampleRate = Float(format.sampleRate)
         let source = AVAudioSourceNode(format: format) { _, _, frameCount, bufferList -> OSStatus in
@@ -51,6 +64,16 @@ final class SoundEngine {
         engine.mainMixerNode.outputVolume = 0.9
         start()
 
+        // The rock loop takes a moment to synthesize, so build it off the main thread.
+        let fmt = format
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let buffer = RockLoop.render(format: fmt)
+            DispatchQueue.main.async {
+                self?.musicBuffer = buffer
+                self?.updateMusic()
+            }
+        }
+
         NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
             self?.start()
         }
@@ -64,6 +87,30 @@ final class SoundEngine {
         guard !engine.isRunning else { return }
         engine.prepare()
         try? engine.start()
+        if engine.isRunning && musicPlaying {
+            musicPlaying = false
+            updateMusic()
+        }
+    }
+
+    /// Louder during a run, quieter on the menus.
+    func setMusicLevel(playing: Bool) {
+        musicVoice.volume = playing ? 0.42 : 0.2
+    }
+
+    private func updateMusic() {
+        let want = enabled && musicEnabled && musicBuffer != nil
+        if want && !musicPlaying {
+            start()
+            guard engine.isRunning, let buffer = musicBuffer else { return }
+            musicVoice.stop()
+            musicVoice.scheduleBuffer(buffer, at: nil, options: [.loops], completionHandler: nil)
+            musicVoice.play()
+            musicPlaying = true
+        } else if !want && musicPlaying {
+            musicVoice.stop()
+            musicPlaying = false
+        }
     }
 
     func play(_ sfx: Sfx, volume: Float = 1) {
@@ -81,7 +128,7 @@ final class SoundEngine {
     /// 0 silences the thrust; 0...1 sets how hard it is blowing.
     func setThrust(_ level: Float) {
         let on = enabled && level > 0
-        synth.targetAmp = on ? 0.35 + 0.4 * level : 0
+        synth.targetAmp = on ? 0.2 + 0.55 * level : 0
         synth.targetPitch = on ? level : 0
     }
 
@@ -101,12 +148,15 @@ final class SoundEngine {
         let gen: (Float) -> Float
         switch sfx {
         case .blast:
-            // Pneumatic release: a bright burst of air over a low thump.
-            duration = 0.4
+            // Ignition: a valve click, then a low whump that swells into the roar.
+            duration = 0.7
             gen = { t in
-                lp += (noise() - lp) * (0.5 * expf(-t * 6) + 0.05)
-                let thump = sinf(tau * (95 - 70 * t) * t) * expf(-t * 22)
-                return lp * expf(-t * 9) + 0.9 * thump
+                let click = t < 0.01 ? noise() * (1 - t / 0.01) : 0
+                phase += tau * (38 + 90 * min(1, t / 0.35)) / sr
+                let whump = sinf(phase) * min(1, t / 0.05) * expf(-t * 4.5)
+                lp += (noise() - lp) * (0.03 + 0.12 * min(1, t / 0.3))
+                let swell = lp * min(1, t / 0.25) * expf(-max(0, t - 0.25) * 6) * 3
+                return 0.5 * click + 0.9 * whump + swell
             }
         case .puff:
             duration = 0.3
@@ -205,31 +255,48 @@ final class SoundEngine {
 }
 
 /// Runs on the audio thread. The scene only writes the two targets; the synth glides to them.
+///
+/// Modelled on a rocket or cold-gas thruster rather than a jet: a deep two-pole roar, a bright
+/// hiss on top, and the sharp "crackle" of shock waves in the exhaust, which gets denser as
+/// the thrust builds.
 final class ThrustSynth {
     var targetAmp: Float = 0
     var targetPitch: Float = 0
 
     private var amp: Float = 0
     private var pitch: Float = 0
-    private var phase: Float = 0
+    private var roar1: Float = 0
+    private var roar2: Float = 0
     private var hiss1: Float = 0
     private var hiss2: Float = 0
-    private var roar: Float = 0
+    private var crack: Float = 0
+    private var crackLP: Float = 0
     private var seed: UInt32 = 22_222
+
+    private func rand() -> Float {
+        seed = seed &* 1_664_525 &+ 1_013_904_223
+        return Float(Int32(bitPattern: seed)) / Float(Int32.max)
+    }
 
     func render(into out: UnsafeMutablePointer<Float>, frames: Int, sampleRate: Float) {
         let ta = targetAmp, tp = targetPitch
         for i in 0..<frames {
-            amp += (ta - amp) * 0.0012
-            pitch += (tp - pitch) * 0.0004
-            seed = seed &* 1_664_525 &+ 1_013_904_223
-            let n = Float(Int32(bitPattern: seed)) / Float(Int32.max)
-            hiss1 += (n - hiss1) * (0.10 + 0.35 * pitch)
-            hiss2 += (hiss1 - hiss2) * 0.02
-            roar += (n - roar) * 0.006
-            phase += 2 * .pi * (220 + 700 * pitch) / sampleRate
-            if phase > 2 * .pi { phase -= 2 * .pi }
-            let s = amp * (0.9 * (hiss1 - hiss2) + 2.2 * roar + 0.05 * sinf(phase))
+            // Slow glide so the roar swells with the spool-up instead of snapping on.
+            amp += (ta - amp) * 0.0006
+            pitch += (tp - pitch) * 0.0003
+            let n = rand()
+            let r = 0.02 + 0.04 * pitch
+            roar1 += (n - roar1) * r
+            roar2 += (roar1 - roar2) * r
+            hiss1 += (n - hiss1) * (0.25 + 0.3 * pitch)
+            hiss2 += (hiss1 - hiss2) * 0.05
+            let u = abs(rand())
+            if u < 0.0015 + 0.006 * pitch {
+                crack = (rand() > 0 ? 1 : -1) * (0.6 + 0.4 * abs(rand()))
+            }
+            crack *= 0.86
+            crackLP += (crack - crackLP) * 0.5
+            let s = amp * (4.5 * roar2 + 0.45 * (hiss1 - hiss2) + 1.5 * pitch * crackLP)
             out[i] = s / (1 + abs(s))
         }
     }
