@@ -25,7 +25,7 @@ enum CarModel: CaseIterable {
 
     var paints: [UIColor] {
         switch self {
-        case .roadsterX: return [UIColor(hex: 0xc8101e)]
+        case .roadsterX: return [UIColor(hex: 0xc3c7cd)]
         case .wedgeTruck: return [UIColor(hex: 0xaeb3b8)]
         case .toroV12: return [UIColor(hex: 0xf7c518), UIColor(hex: 0x5cc23a), UIColor(hex: 0xf2711c)]
         case .rossoGT: return [UIColor(hex: 0xcc0d12), UIColor(hex: 0xffd417)]
@@ -39,11 +39,14 @@ enum CarModel: CaseIterable {
         // Points are normalised: x runs rear (0) to nose (1), y runs roof (0) to wheel contact (1).
         switch self {
         case .roadsterX:
-            return CarSpec(length: 82, height: 26, smooth: true,
-                           body: [(0.03, 0.80), (0.0, 0.52), (0.05, 0.40), (0.30, 0.36), (0.44, 0.30), (0.52, 0.06),
-                                  (0.64, 0.04), (0.76, 0.30), (0.93, 0.40), (1.0, 0.56), (0.99, 0.80)],
-                           glass: [(0.47, 0.31), (0.53, 0.11), (0.63, 0.09), (0.73, 0.31)],
-                           wheels: [0.19, 0.81], wheelRadius: 0.27, lightY: 0.50)
+            // The new roadster: very low and smooth, a wraparound glass canopy set mid-car,
+            // a long fastback tail and a short rounded nose. Liquid-silver paint, dark aero wheels.
+            return CarSpec(length: 86, height: 25, smooth: true,
+                           body: [(0.02, 0.80), (0.0, 0.56), (0.03, 0.42), (0.16, 0.35), (0.30, 0.27), (0.42, 0.10),
+                                  (0.53, 0.04), (0.62, 0.07), (0.71, 0.27), (0.86, 0.35), (0.97, 0.47), (1.0, 0.62),
+                                  (0.98, 0.80)],
+                           glass: [(0.31, 0.29), (0.43, 0.12), (0.53, 0.07), (0.61, 0.10), (0.69, 0.29)],
+                           wheels: [0.18, 0.81], wheelRadius: 0.30, lightY: 0.48, chrome: true)
         case .voltSedan:
             return CarSpec(length: 92, height: 34, smooth: true,
                            body: [(0.02, 0.76), (0.0, 0.48), (0.06, 0.38), (0.20, 0.35), (0.33, 0.08), (0.55, 0.03),
@@ -98,6 +101,8 @@ struct CarSpec {
     let wheels: [CGFloat]
     let wheelRadius: CGFloat
     let lightY: CGFloat
+    /// Mirror-like silver paint and dark aero rims.
+    var chrome: Bool = false
 }
 
 /// Draws cars and roadside props into textures. Everything is vector-drawn at the device's
@@ -151,11 +156,19 @@ enum CarArt {
         ctx.saveGState()
         ctx.addPath(body)
         ctx.clip()
-        let paintColors = stainless
-            ? [paint.shaded(0.25), paint, paint.shaded(-0.12), paint.shaded(-0.35)]
-            : [paint.shaded(0.22), paint, paint.shaded(-0.18), paint.shaded(-0.42)]
-        ctx.drawLinearGradient(Textures.gradient(paintColors, locations: [0, 0.35, 0.7, 1]),
-                               start: CGPoint(x: 0, y: roofY), end: CGPoint(x: 0, y: sillY), options: [])
+        if spec.chrome {
+            // Liquid silver: sky on top, a bright horizon line, the dark road reflected below it.
+            ctx.drawLinearGradient(Textures.gradient([UIColor(hex: 0xf4f6f9), UIColor(hex: 0xd2d7de), UIColor(hex: 0xffffff),
+                                                      UIColor(hex: 0x6b717c), UIColor(hex: 0x8d939d), UIColor(hex: 0xb9bec6)],
+                                                     locations: [0, 0.38, 0.47, 0.55, 0.8, 1]),
+                                   start: CGPoint(x: 0, y: roofY), end: CGPoint(x: 0, y: sillY), options: [])
+        } else {
+            let paintColors = stainless
+                ? [paint.shaded(0.25), paint, paint.shaded(-0.12), paint.shaded(-0.35)]
+                : [paint.shaded(0.22), paint, paint.shaded(-0.18), paint.shaded(-0.42)]
+            ctx.drawLinearGradient(Textures.gradient(paintColors, locations: [0, 0.35, 0.7, 1]),
+                                   start: CGPoint(x: 0, y: roofY), end: CGPoint(x: 0, y: sillY), options: [])
+        }
         // Clear-coat sheen along the shoulder.
         ctx.drawLinearGradient(Textures.gradient([UIColor.white.withAlphaComponent(0), UIColor.white.withAlphaComponent(0.35),
                                                   UIColor.white.withAlphaComponent(0)], locations: [0, 0.5, 1]),
@@ -211,10 +224,10 @@ enum CarArt {
         ctx.fill(CGRect(x: W - 6 * k, y: ly - 1.2 * k, width: 6 * k, height: 2.2 * k))
         ctx.restoreGState()
 
-        for wx in spec.wheels { drawWheel(ctx, center: CGPoint(x: wx * W, y: H - r), r: r, k: k) }
+        for wx in spec.wheels { drawWheel(ctx, center: CGPoint(x: wx * W, y: H - r), r: r, k: k, dark: spec.chrome) }
     }
 
-    private static func drawWheel(_ ctx: CGContext, center c: CGPoint, r: CGFloat, k: CGFloat) {
+    private static func drawWheel(_ ctx: CGContext, center c: CGPoint, r: CGFloat, k: CGFloat, dark: Bool = false) {
         ctx.setFillColor(UIColor(hex: 0x0b0c10).cgColor)
         ctx.fillEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
         // Sidewall highlight.
@@ -225,8 +238,10 @@ enum CarArt {
         ctx.saveGState()
         ctx.addEllipse(in: CGRect(x: c.x - rim, y: c.y - rim, width: rim * 2, height: rim * 2))
         ctx.clip()
-        ctx.drawRadialGradient(Textures.gradient([UIColor(hex: 0xd9dde4), UIColor(hex: 0x8a909c), UIColor(hex: 0x3b3f47)],
-                                                 locations: [0, 0.6, 1]),
+        let rimColors = dark
+            ? [UIColor(hex: 0x6a707a), UIColor(hex: 0x30343b), UIColor(hex: 0x16181c)]
+            : [UIColor(hex: 0xd9dde4), UIColor(hex: 0x8a909c), UIColor(hex: 0x3b3f47)]
+        ctx.drawRadialGradient(Textures.gradient(rimColors, locations: [0, 0.6, 1]),
                                startCenter: CGPoint(x: c.x - rim * 0.3, y: c.y - rim * 0.3), startRadius: 0,
                                endCenter: c, endRadius: rim, options: [])
         ctx.restoreGState()

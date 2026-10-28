@@ -12,7 +12,11 @@ final class GameScene: SKScene {
     }
 
     private(set) var state: State = .ready {
-        didSet { if oldValue != state { onStateChange?(state) } }
+        didSet {
+            guard oldValue != state else { return }
+            SoundEngine.shared.setMusicLevel(playing: state == .play)
+            onStateChange?(state)
+        }
     }
 
     private let sound = SoundEngine.shared
@@ -35,7 +39,7 @@ final class GameScene: SKScene {
     private var scroll: CGFloat = 0
     private var bonus = 0
     private var score = 0
-    private var best = UserDefaults.standard.integer(forKey: "best")
+    private var best = Leaderboard.shared.best
     private var flips = 0
     private var chain = 0
     private var grounded = true
@@ -47,6 +51,8 @@ final class GameScene: SKScene {
     private var reason = ""
     private var thrusting = false
     private var holdTime: CGFloat = 0
+    /// 0...1 thruster output. It spools up slowly like a real turbine and bleeds off after release.
+    private var power: CGFloat = 0
 
     private var obstacles: [Obstacle] = []
     private var cans: [Canister] = []
@@ -137,6 +143,8 @@ final class GameScene: SKScene {
         y = gy
         vy = 0
         air = 1
+        power = 0
+        holdTime = 0
         roadSpeed = Tune.startSpeed
         dist = 0
         t = 0
@@ -155,7 +163,7 @@ final class GameScene: SKScene {
         shadow.isHidden = false
         state = .ready
         showPanel(Panel.make(title: "Space Roadster X",
-                             lines: ["Hold anywhere to fire the thrusters.", "Let go to drop. Land on roofs or jump them.",
+                             lines: ["Hold to fire the thrusters. They take a", "moment to spool up, so hold early.", "Let go to drop. Land on roofs or jump them.",
                                      "Swipe up in the air to flip for +250.", "Ground time refills air. Grab canisters too."],
                              footer: "Tap to start", accent: Palette.paint, size: size))
         placeCar()
@@ -175,6 +183,7 @@ final class GameScene: SKScene {
         reason = why
         holding = false
         stopThrust(puff: false)
+        power = 0
         fx?.update(on: false, intensity: 0, altitude: .infinity, ground: .zero)
         fx?.explosion(at: CGPoint(x: cx, y: y + carH * 0.5))
         carNode.isHidden = true
@@ -182,10 +191,12 @@ final class GameScene: SKScene {
         sound.play(.crash)
         haptics.crash()
         var lines = [why, "Score \(score) · \(flips) flips"]
-        if score > best {
-            best = score
-            UserDefaults.standard.set(best, forKey: "best")
-            lines.append("New best!")
+        let rank = Leaderboard.shared.submit(score: score, flips: flips)
+        best = Leaderboard.shared.best
+        if rank == 1 {
+            lines.append("New best! Rank #1")
+        } else if let rank {
+            lines.append("Rank #\(rank) of top \(Leaderboard.size)")
         } else {
             lines.append("Best \(best)")
         }
@@ -256,12 +267,16 @@ final class GameScene: SKScene {
         }
         if thrusting {
             holdTime += dt
-            vy += Tune.thrust * k * dt
-            air = max(0, air - Tune.airDrain * dt)
-            let level = min(1, 0.35 + holdTime * 0.9)
-            sound.setThrust(Float(level))
-            haptics.thrustLevel(Float(level))
+            let p = min(1, holdTime / Tune.spoolUp)
+            power = max(power, p * p * (3 - 2 * p))
+            air = max(0, air - Tune.airDrain * (0.4 + 0.6 * power) * dt)
+            let level = Float(0.12 + 0.88 * power)
+            sound.setThrust(level)
+            haptics.thrustLevel(level)
+        } else {
+            power = max(0, power - dt / Tune.spoolDown)
         }
+        vy += Tune.thrust * k * power * dt
 
         // Gravity and the ceiling under the HUD.
         vy -= Tune.gravity * k * dt
@@ -341,7 +356,7 @@ final class GameScene: SKScene {
         }
 
         score = Int(dist / (10 * k)) + bonus
-        fx?.update(on: thrusting, intensity: min(1, holdTime / 1.2), altitude: y - support,
+        fx?.update(on: thrusting || power > 0.05, intensity: power, altitude: y - support,
                    ground: CGPoint(x: cx, y: support))
         placeCar()
         updateHUD()
