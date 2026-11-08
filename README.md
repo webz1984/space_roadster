@@ -51,4 +51,4 @@ The road refills air, a roof refills it twice as fast, and blue canisters top it
 | `SpaceRoadsterX/FX` | Air-thrust particles, dust, landing rings, and the crash effect |
 | `SpaceRoadsterX/Feedback` | Synthesized sound effects and Core Haptics patterns |
 
-The design doc lives in the project's Claude Docs as "Space Roadster X: Game Design".
+The design doc is in [`docs/DESIGN.md`](docs/DESIGN.md).
